@@ -26,12 +26,26 @@ Both case studies come from **sensitive domains**, where an unexplained decision
 | **Question** | Why did the model deny this mortgage? |
 | **Data** | Boston HMDA: 2,380 real mortgage applications collected by the Federal Reserve Bank of Boston (Munnell et al., 1996; also used in Stock & Watson, *Introduction to Econometrics*) |
 | **Download** | automatic, CSV from the Rdatasets archive: `https://raw.githubusercontent.com/vincentarelbundock/Rdatasets/master/csv/AER/HMDA.csv` |
-| **Features** | 9: `pirat` (debt payments / income), `hirat` (housing expenses / income), `lvrat` (loan-to-value), `chist` (consumer credit history, 1 = best … 6 = worst), `mhist` (mortgage credit history, 1 … 4), `phist` (public bad credit record), `selfemp`, `single`, `afam` (African-American applicant: **protected attribute**) |
+| **Features** | 9, renamed in the notebooks for readability (see the table below) |
 | **Target** | `deny` (12% of applications were denied) |
 | **Black box** | `RandomForestClassifier(n_estimators=100, min_samples_leaf=10, random_state=42)`, stratified 75/25 split |
 | **Test performance** | ROC-AUC 0.806 |
 
-**What the explanations reveal:** the model uses **race**. Applicant #112 is denied (P(deny) = 0.52); an identical applicant with `afam = 0` would be approved (0.46). LIME finds `afam=yes` pushing toward denial for practically all the 85 African-American applicants of the test set (rarely the main reason, but always there). SHAP measures it in probability points and splits the gap in predicted risk between the two groups into feature contributions: race explains about 3 of the 11 points of gap.
+| Name in the notebooks | Meaning | Original name |
+| :--- | :--- | :---: |
+| `debt_to_income` | total debt payments / income | `pirat` |
+| `housing_to_income` | housing expenses / income | `hirat` |
+| `loan_to_value` | loan / value of the property | `lvrat` |
+| `credit_problems` | consumer credit history: 1 = no late payments, 2 = one or two, 3 = more than two, 4 = not enough history, 5 = 60 days overdue, 6 = 90 days overdue (higher = worse) | `chist` |
+| `mortgage_problems` | mortgage payment history: 1 = no late payments, 2 = no mortgage history, 3 = one or two late payments, 4 = more than two (higher = worse) | `mhist` |
+| `public_bad_record` | public record of credit problems (e.g. bankruptcy) | `phist` |
+| `self_employed` | self-employed | `selfemp` |
+| `single` | single | `single` |
+| `african_american` | African-American applicant: **protected attribute** | `afam` |
+
+The levels of the two credit histories are those of the documentation of the Boston HMDA data (a low value is a good score). The renaming is done in the data cell (`hmda.rename(...)`), identical in Notebooks 1 and 3.
+
+**What the explanations reveal:** the model uses **race**. Applicant #112 is denied (P(deny) = 0.52); an identical applicant with `african_american = 0` would be approved (0.46). LIME finds `african_american=yes` pushing toward denial for practically all the 85 African-American applicants of the test set (rarely the main reason, but always there). SHAP measures it in probability points and splits the gap in predicted risk between the two groups into feature contributions: race explains about 3 of the 11 points of gap.
 
 > The variable `insurance` (= a separate insurer refused mortgage insurance) is left out on purpose: it is almost a copy of the outcome and would dominate every explanation.
 
@@ -78,9 +92,22 @@ All four notebooks follow the same structure:
 4. **Part 4 — The limits** of the method, shown with code where possible.
 5. **Summary**, discussion questions (in capital letters, to start a class discussion), final exercises, references.
 
+**A figure opens the explanation of each method** (start of Part 2; the images are embedded in the notebooks, no external files needed):
+- **LIME notebooks**: the original LIME intuition figure (the black box's decision function, the instance, the weighted perturbed copies, the local linear explanation), followed by a table that explains every element. Figure from the LIME repository, © 2016 Marco Tulio Ribeiro, BSD licence.
+- **SHAP notebooks**: a lattice of the 8 teams that can be formed with 3 players (`public_bad_record`, `credit_problems`, `loan_to_value` for applicant #112; *Rome*, *aorta*, *aneurysms* for document #532), with the **real values** of our model. An order of the players is a path through the lattice; the orange arrows show when one player joins, with the weight and the marginal contribution of each arrow, and the text computes its Shapley value step by step (+0.217 for `public_bad_record`, +0.446 for *Rome*).
+
+**How the copies are built, and what you can set** (each notebook answers these questions explicitly, with code):
+
+| | How a copy of the instance is built | How many features/words change in a copy? | What you can set |
+| :--- | :--- | :--- | :--- |
+| LIME · tabular | **every** feature is drawn again from the training data, each one from a **different random applicant** (the notebook shows copy #1 feature by feature, with the applicant each value comes from) | **random**, not set: a feature keeps the applicant's range with probability = share of training applicants in that range; for applicant #112, 6 of 9 features change on average (chart) | `num_samples`, `kernel_width`, `discretizer`, `num_features` |
+| LIME · text | LIME draws **how many** words to remove (uniformly between 1 and the number of distinct words $d$), then **which** ones; no words are taken from other documents | **random**: from 1 to $d$, about half on average | `num_samples`, `kernel_width`, `bow`, `num_features` |
+| SHAP · tabular | for a team $S$: the features in $S$ from the applicant, **all** the others from **one** background applicant (the whole row), for each of the 100 background applicants (the notebook shows 3 copies) | **not random**: $9 - \|S\|$, and all team sizes are used (exact: all 512 teams) | the background (which and how many applicants), the algorithm (exact, permutation, tree) |
+| SHAP · text | for a team $S$: the document with only the words of $S$, all the others removed (no background) | **not random**: $d - \|S\|$; all $2^d$ teams are too many, so teams are sampled (1,000 random orders by hand, `max_evals` in the library) | what a player is (the masker), the number of orders / `max_evals` |
+
 | Notebook | By hand | With the library | What it is used for |
 | :--- | :--- | :--- | :--- |
-| 1. LIME · tabular | applicant #112: quartile ranges, 5,000 copies drawn from real applicants, Gaussian kernel, weighted Ridge regression; a chart of "what LIME sees" (the LIME weight ≈ the gap in P(deny) between copies that keep and copies that leave the applicant's range) | `LimeTabularExplainer` (HTML view + bar chart) | LIME on all 85 African-American applicants; "identical twin" test; stability; unrealistic copies (`hirat > pirat`) |
+| 1. LIME · tabular | applicant #112: quartile ranges, 5,000 copies drawn from real applicants, how many features change per copy, Gaussian kernel, weighted Ridge regression; a chart of "what LIME sees" (the LIME weight ≈ the gap in P(deny) between copies that keep and copies that leave the applicant's range) | `LimeTabularExplainer` (HTML view + bar chart) | LIME on all 85 African-American applicants; "identical twin" test; stability; unrealistic copies (`housing_to_income > debt_to_income`) |
 | 2. LIME · text | document #532: 2,000 copies with random words removed, kernel, weighted Ridge; scatter plot of the copies | `LimeTextExplainer` (HTML view + bar chart) | most important word of 50 documents; deployment test; stability |
 | 3. SHAP · tabular | applicant #112: value of a team $v(S)$ with a background of 100 applicants, two orders → two stories, average over 1,000 orders = Shapley values | exact explainer: waterfall, beeswarm, mean \|SHAP\| bar, dependence plots | LIME vs SHAP on the same applicant; fairness audit and decomposition of the gap between groups |
 | 4. SHAP · text | document #532: words as players, the empty document as base value, two orders, 1,000 orders; efficiency and dummy (ignored words get exactly 0) | text explainer: interactive text plot | LIME vs SHAP on the same document; global word ranking over 100 documents; deployment test |
@@ -98,9 +125,9 @@ Each notebook has one exercise in which students **edit one line** and re-run tw
 
 | Notebook | Exercise | Line to edit | Expected result |
 | :--- | :--- | :--- | :--- |
-| 1 | A fairer model? | `features_to_drop = ['afam']` | AUC 0.806 → 0.795; applicant #112 approved (0.523 → 0.398); average predicted risk: African-American 20.5% → 17.6%, others 9.9% → 10.2% |
+| 1 | A fairer model? | `features_to_drop = ['african_american']` | AUC 0.806 → 0.795; applicant #112 approved (0.523 → 0.398); average predicted risk: African-American 20.5% → 17.6%, others 9.9% → 10.2% |
 | 2 | Fix the text model | `extra_stop_words = ['Milan', 'Rome']` | deployment accuracy 86.1% → 92.9%; test 94.9% → 92.9% (the original model was "cheating"); document #532 goes to Cardiology |
-| 3 | Where does the gap go? | `features_to_drop = ['afam']` | the race bar disappears, total gap 0.109 → 0.074, the other features barely change |
+| 3 | Where does the gap go? | `features_to_drop = ['african_american']` | the race bar disappears, total gap 0.109 → 0.074, the other features barely change |
 | 4 | Fix the model using only the global view | `extra_stop_words = ['Milan', 'Rome']` | ranking led by *cardiac*, *cancer*, *hypertension*; deployment accuracy 86.1% → 92.9% |
 
 Each notebook also ends with 4 open **final exercises** (e.g. what-if on a feature, kernel width, another neighbourhood or background, your own document, fewer orders, `TreeExplainer`).
